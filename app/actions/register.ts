@@ -26,7 +26,7 @@ export async function register(prevState: unknown, formData: FormData) {
   const isAdmin = isAdminEmail(email);
 
   await prisma.user.create({
-    data: { name, email, passwordHash, team, isAdmin },
+    data: { name, email, password: passwordHash, team, isAdmin },
   });
 
   redirect("/login?registered=1");
