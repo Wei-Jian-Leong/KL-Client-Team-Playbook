@@ -1667,7 +1667,7 @@ function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, user
     startQuizTransition(async () => {
       const res = await addKnowledgeQuizQuestion(a.id, { question: newQ.question, type: newQ.type, options, correctAnswer });
       if ("id" in res && res.id) {
-        setQuizQuestions(prev => [...prev, { id: res.id, question: newQ.question, type: newQ.type, options: JSON.stringify(options), correctAnswer, isDraft: true }]);
+        setQuizQuestions(prev => [...prev, { id: res.id, question: newQ.question, type: newQ.type, options: JSON.stringify(options), correctAnswer, isDraft: true, gradingType: "NONE", order: prev.length }]);
       }
       setNewQ({ question: "", type: "SELECT", options: ["", "", "", ""], correctAnswer: "", multiCorrect: [] });
       setShowAddQuiz(false);

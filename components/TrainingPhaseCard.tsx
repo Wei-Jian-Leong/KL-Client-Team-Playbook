@@ -78,14 +78,14 @@ function ordinalLabel(n: number) {
 function defaultCosAuditors(hireRole: string, sessionName: string) {
   if (MENU_ROLES.includes(hireRole)) {
     return [
-      { auditorName: sessionName, auditorRole: "PRIMARY", auditorResult: "PASSED" as const },
-      { auditorName: "Wei Loon Ooi", auditorRole: "LEAD", auditorResult: "PASSED" as const },
+      { auditorName: sessionName, auditorRole: "PRIMARY", auditorResult: "PASSED" as "PASSED" | "FAILED" },
+      { auditorName: "Wei Loon Ooi", auditorRole: "LEAD", auditorResult: "PASSED" as "PASSED" | "FAILED" },
     ];
   }
   return [
-    { auditorName: sessionName, auditorRole: "PRIMARY", auditorResult: "PASSED" as const },
-    { auditorName: "", auditorRole: "LEAD", auditorResult: "PASSED" as const },
-    { auditorName: "Sik", auditorRole: "OPTIONAL", auditorResult: "PASSED" as const },
+    { auditorName: sessionName, auditorRole: "PRIMARY", auditorResult: "PASSED" as "PASSED" | "FAILED" },
+    { auditorName: "", auditorRole: "LEAD", auditorResult: "PASSED" as "PASSED" | "FAILED" },
+    { auditorName: "Sik", auditorRole: "OPTIONAL", auditorResult: "PASSED" as "PASSED" | "FAILED" },
   ];
 }
 
@@ -495,7 +495,7 @@ export default function TrainingPhaseCard({
                         </div>
                       ))}
                       <button
-                        onClick={() => setCosAuditors([...cosAuditors, { auditorName: "", auditorRole: "LEAD" }])}
+                        onClick={() => setCosAuditors([...cosAuditors, { auditorName: "", auditorRole: "LEAD", auditorResult: "PASSED" as "PASSED" | "FAILED" }])}
                         className="text-xs text-purple-600 hover:underline"
                       >
                         + Add auditor

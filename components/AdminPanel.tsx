@@ -606,7 +606,7 @@ export default function AdminPanel({ joinDateSlots, joinDateRequests, users, men
                   if (!confirm(`Delete ${m.name} from the mentor list?`)) return;
                   startTransition(async () => {
                     const res = await deleteMentor(m.id);
-                    if (res?.error) flash(res.error, false);
+                    if (!res?.success) flash("Failed to delete mentor", false);
                     else flash(`${m.name} removed`);
                   });
                 }}

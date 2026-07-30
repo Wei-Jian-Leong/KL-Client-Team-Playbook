@@ -233,7 +233,7 @@ export default function TrainingCalendar({ phases, showMenu, yearLabel }: { phas
       {/* Legend */}
       <div className="flex items-center gap-3 mb-5 flex-wrap">
         {(["GD", "COS", ...(showMenu ? ["MENU"] : [])] as const).map((t) => {
-          const s = TYPE_STYLE[t];
+          const s = TYPE_STYLE[t as keyof typeof TYPE_STYLE];
           return (
             <div key={t} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${s.light} ${s.border}`}>
               <span className={`w-2.5 h-2.5 rounded-full ${s.dot}`} />

@@ -81,7 +81,7 @@ type NewHireStat = {
   role: string;
   topicAcknowledgments: { topicId: string }[];
   slideProgress: { topicId: string; maxSlideReached: number }[];
-  questionAnswers: { questionId: string }[];
+  questionAnswers: { questionId: string; answer: string }[];
 };
 
 type LocalQuestion = {
@@ -173,7 +173,7 @@ export default function TrainingMaterialsView({ modules, isAdmin, isNewHire, new
   const [answerFeedback, setAnswerFeedback] = useState<Record<string, Record<string, { correct: boolean | null; modelAnswer: string | null }>>>({});
   const [questionIndex, setQuestionIndex] = useState<Record<string, number>>({});
   const questionImageRefsMap = useRef<Record<string, HTMLInputElement | null>>({});
-  const slideViewerRefs = useRef<Record<string, React.RefObject<SlideViewerHandle>>>({});
+  const slideViewerRefs = useRef<Record<string, React.RefObject<SlideViewerHandle | null>>>({});
 
   // Drag-and-drop ordering (admin only)
   const [localModuleIds, setLocalModuleIds] = useState<string[]>(() => modules.map((m) => m.id));
@@ -410,7 +410,7 @@ export default function TrainingMaterialsView({ modules, isAdmin, isNewHire, new
   function handleApproveDraft(questionId: string) {
     startTransition(async () => {
       const res = await approveDraftQuestion(questionId);
-      if (res?.error) { setError(res.error); return; }
+      if (!res.success) { setError("Failed to approve question"); return; }
       setEditQuestions((prev) => prev.map((q) => q.id === questionId ? { ...q, isDraft: false } : q));
     });
   }

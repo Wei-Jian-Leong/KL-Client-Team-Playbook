@@ -163,7 +163,7 @@ export default async function NewHireDetailPage({ params }: { params: Promise<{ 
 
       {/* COS mentor not assigned warning */}
       {(isCosTraining || !!user?.isAdmin) && hire.trainingPhases.some(
-        p => p.type === "COS" && p.status === "PENDING" && !p.cosMentor
+        p => p.type === "COS" && p.status === "PENDING" && !p.cosMentorId
       ) && (
         <div className="flex items-center gap-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-xl px-4 py-3 text-yellow-800 dark:text-yellow-300 text-sm">
           <span>⚠️</span>

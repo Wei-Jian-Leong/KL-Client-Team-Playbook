@@ -8,10 +8,11 @@ import ExitPreviewButton from "./ExitPreviewButton";
 
 interface Notification {
   id: string;
-  message: string;
+  title: string;
+  content: string;
+  link: string | null;
   read: boolean;
   createdAt: Date;
-  newHireId: string | null;
 }
 
 interface NewHire {
