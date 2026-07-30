@@ -86,6 +86,7 @@ export async function createOnboardingTicket(hire: {
   laptopNeeded?: string;
   equipmentDelivery?: string;
   equipmentDeliveryAddress?: string;
+  personalPhone?: string;
 }): Promise<{ ticketId: string; ticketUrl: string } | null> {
   if (!JIRA_API_TOKEN) {
     console.warn("JIRA_API_TOKEN not set — skipping Jira ticket creation");
