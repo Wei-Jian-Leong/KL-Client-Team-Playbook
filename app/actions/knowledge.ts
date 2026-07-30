@@ -411,6 +411,7 @@ export async function addKnowledgeQuizQuestion(
       options: JSON.stringify(data.options.filter(Boolean)),
       correctAnswer: data.correctAnswer,
       isDraft: true,
+      order: await prisma.knowledgeArticleQuiz.count({ where: { articleId } }),
     },
   });
   revalidatePath("/knowledge");
