@@ -18,6 +18,61 @@ import bcrypt from "bcryptjs";
 const ALL_TEAMS = ["IT", "RTA", "HR", "GD_TRAINING", "COS_TRAINING", "MENU_TRAINING"];
 const MENU_ROLES = ["PIS", "OSM", "AE"];
 
+const ROLE_TITLES: Record<string, string> = {
+  COS_I: "Client Operations Specialist I",
+  COS_II: "Client Operations Specialist II",
+  COM: "Client Operations Manager",
+  COSTL: "Client Operations Team Lead",
+  GD: "Growth Driver",
+  RTA: "Real-Time Analyst",
+  PIS: "Partner Integration Specialist",
+  OSM: "Operations Support Manager",
+  AE: "Account Executive",
+};
+
+async function postNewHireAnnouncement(hire: {
+  name: string;
+  bambooEid: string;
+  role: string;
+  roleDescription?: string | null;
+  joinDate: Date;
+  jiraTicketId: string | null;
+  jiraTicketUrl: string | null;
+}) {
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) return;
+
+  const dateStr = hire.joinDate.toLocaleDateString("en-US", {
+    month: "long", day: "numeric", year: "numeric", timeZone: "Asia/Kuala_Lumpur",
+  });
+  const roleTitle = ROLE_TITLES[hire.role] ?? hire.roleDescription ?? hire.role;
+  const ticketLine = hire.jiraTicketId && hire.jiraTicketUrl
+    ? `*IT Ticket ID:* <${hire.jiraTicketUrl}|${hire.jiraTicketId}>`
+    : `*IT Ticket ID:* Pending`;
+
+  const text = [
+    `*${dateStr} (MYT) New Hire Alert <!subteam^S073XP455E0>*`,
+    ``,
+    `*${roleTitle}*`,
+    ticketLine,
+    `*Name*: ${hire.name}`,
+    `*Bamboo EID*: ${hire.bambooEid}`,
+  ].join("\n");
+
+  await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      channel: "C0A0XFL3074",
+      text,
+      mrkdwn: true,
+    }),
+  });
+}
+
 export async function createNewHire(prevState: unknown, formData: FormData) {
   const session = await getSession();
   if (!session) return { error: "Not authenticated" };
@@ -277,6 +332,16 @@ export async function createNewHire(prevState: unknown, formData: FormData) {
       }
     }
   }
+
+  postNewHireAnnouncement({
+    name,
+    bambooEid,
+    role,
+    roleDescription,
+    joinDate,
+    jiraTicketId: jira?.ticketId ?? null,
+    jiraTicketUrl: jira?.ticketUrl ?? null,
+  });
 
   revalidatePath("/dashboard");
   return { success: true, id: newHire.id };
