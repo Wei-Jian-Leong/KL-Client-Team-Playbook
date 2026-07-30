@@ -1,0 +1,482 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 String   @id @default(cuid())
+  name               String
+  email              String   @unique
+  password           String
+  team               String   // HR | IT | RTA | GD_TRAINING | COS_TRAINING | MENU_TRAINING | ADMIN | NEW_HIRE
+  position           String?  // COS_I | COS_II | COM | COSTL (for COS_TRAINING users)
+  isAdmin            Boolean  @default(false)
+  mustChangePassword Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  newHiresCreated    NewHire[]        @relation("CreatedBy")
+  newHireProfile     NewHire?         @relation("NewHireUser")
+  comments           Comment[]
+  tasksCompleted     Task[]           @relation("CompletedBy")
+  gdTrainer          TrainingPhase[]  @relation("GDTrainer")
+  cosTrainer         TrainingPhase[]  @relation("COSTrainer")
+  menuTrainer        TrainingPhase[]  @relation("MenuTrainer")
+  notifications      Notification[]
+  joinDateRequests   JoinDateRequest[]
+  performanceNotes   Performance[]
+  trainingModules    TrainingModule[]
+  announcements      Announcement[]
+  quizAttempts       KnowledgeQuizAttempt[]
+  articleReads       ArticleRead[]
+}
+
+model NewHire {
+  id              String    @id @default(cuid())
+  name            String
+  nric            String
+  bambooEid       String
+  role            String    // COS | PIS | OSM | AE | BILLING_COLLECTION | OTHERS
+  roleDescription String?
+  joinDate        DateTime
+  email           String?
+  itTicketId      String?
+  jiraTicketId    String?
+  jiraTicketUrl   String?
+  teamLeadName      String?
+  teamLeadEmail     String?
+  posId             String?
+  status          String    @default("ACTIVE") // ACTIVE | COMPLETED | ON_HOLD | DELETED
+  deleteReason    String?
+  deletedAt       DateTime?
+  waveNumber        Int?
+  personalEmail     String?
+  managerEmail      String?
+  location          String?
+  site              String?
+  division          String?
+  department        String?
+  employeeTeam      String?
+  employmentType    String?
+  employeeType      String?
+  laptopNeeded             String?
+  equipmentDelivery        String?
+  equipmentDeliveryAddress String?
+  personalPhone            String?
+  meetGreetEventId  String?
+  userId            String?   @unique
+  createdAt         DateTime  @default(now())
+  createdById       String
+
+  createdBy        User            @relation("CreatedBy", fields: [createdById], references: [id])
+  user             User?           @relation("NewHireUser", fields: [userId], references: [id])
+  trainingPhases   TrainingPhase[]
+  tasks            Task[]
+  comments         Comment[]
+  performances     Performance[]
+  hireHistory      HireHistory[]
+  topicAcknowledgments TopicAcknowledgment[]
+  slideProgress        SlideProgress[]
+  questionAnswers      TopicQuestionAnswer[]
+}
+
+model TrainingPhase {
+  id            String   @id @default(cuid())
+  newHireId     String
+  type          String   // GD | COS | MENU
+  startDate     DateTime
+  endDate       DateTime
+  status        String   @default("PENDING") // PENDING | IN_PROGRESS | COMPLETED
+  notes         String?
+  updatedAt     DateTime @updatedAt
+
+  gdTrainerId   String?
+  gdMentorId    String?
+  cosTrainerId  String?
+  cosMentorId   String?
+  menuTrainerId String?
+
+  // GD Certification (recorded by GD_TRAINING team)
+  gdCertResult  String?   // "PASSED" | "FAILED"
+  gdCertDate    DateTime?
+  gdCertNotes   String?
+
+  newHire     NewHire     @relation(fields: [newHireId], references: [id])
+  gdTrainer   User?       @relation("GDTrainer", fields: [gdTrainerId], references: [id])
+  cosTrainer  User?       @relation("COSTrainer", fields: [cosTrainerId], references: [id])
+  menuTrainer User?       @relation("MenuTrainer", fields: [menuTrainerId], references: [id])
+  certAudits    CertAudit[]
+  certAttempts  CertAttempt[]
+}
+
+model CertAttempt {
+  id              String    @id @default(cuid())
+  trainingPhaseId String
+  attemptNumber   Int
+  result          String    // "PASSED" | "FAILED"
+  certDate        DateTime
+  fileLink        String?   // Google Drive link (optional)
+  nextAttemptDate DateTime? // set when result = FAILED and trainer schedules a reattempt
+  notes           String?
+  recordedById    String
+  createdAt       DateTime  @default(now())
+
+  trainingPhase TrainingPhase @relation(fields: [trainingPhaseId], references: [id])
+  certAudits    CertAudit[]
+}
+
+model CertAudit {
+  id              String    @id @default(cuid())
+  trainingPhaseId String
+  certAttemptId   String?
+  auditorName     String
+  auditorId       String?
+  role            String    // "PRIMARY" | "LEAD" | "OPTIONAL"
+  result          String?   // "PASSED" | "FAILED"
+  notes           String?
+  auditedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  trainingPhase TrainingPhase @relation(fields: [trainingPhaseId], references: [id])
+  certAttempt   CertAttempt?  @relation(fields: [certAttemptId], references: [id])
+}
+
+model Task {
+  id            String    @id @default(cuid())
+  newHireId     String
+  team          String
+  title         String
+  status        String    @default("PENDING") // PENDING | IN_PROGRESS | COMPLETED
+  slaDate       DateTime?
+  completedAt   DateTime?
+  completedById String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  newHire     NewHire       @relation(fields: [newHireId], references: [id])
+  completedBy User?         @relation("CompletedBy", fields: [completedById], references: [id])
+  comments    Comment[]
+  history     TaskHistory[]
+}
+
+model TaskHistory {
+  id         String   @id @default(cuid())
+  taskId     String
+  userId     String
+  userName   String
+  fromStatus String?
+  toStatus   String
+  createdAt  DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  content   String
+  authorId  String
+  newHireId String?
+  taskId    String?
+  createdAt DateTime @default(now())
+
+  author  User     @relation(fields: [authorId], references: [id])
+  newHire NewHire? @relation(fields: [newHireId], references: [id])
+  task    Task?    @relation(fields: [taskId], references: [id])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  content   String
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model JoinDateSlot {
+  id          String   @id @default(cuid())
+  date        DateTime @unique
+  label       String?
+  isAvailable Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model JoinDateRequest {
+  id             String   @id @default(cuid())
+  requestedDate  DateTime
+  reason         String
+  requestedById  String
+  status         String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  adminNote      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  requestedBy User @relation(fields: [requestedById], references: [id])
+}
+
+model KnowledgeArticle {
+  id         String    @id @default(cuid())
+  category   String    // GD | COS | CMA | DE
+  title      String
+  slackLink  String?
+  altLink    String?
+  date       String    // "MM/DD/YYYY"
+  articleNo  Int?      @unique
+  content    String?
+  files      String?   // JSON: [{id, name, mimeType}]
+  titleZh    String?
+  contentZh  String?
+  zhDraft    Boolean   @default(true)
+  isArchived Boolean   @default(false)
+  archivedAt DateTime?
+  isDraft     Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime?
+  changeNotes    String?
+  changeNotesZh  String?
+  slackMessageTs String?
+  updateHistory  String?
+
+  quizQuestions KnowledgeArticleQuiz[]
+  quizAttempts  KnowledgeQuizAttempt[]
+  reads         ArticleRead[]
+  faqs          ArticleFAQ[]
+}
+
+model ArticleRead {
+  id        String   @id @default(cuid())
+  userId    String
+  articleId String
+  readAt    DateTime @default(now())
+
+  user    User             @relation(fields: [userId], references: [id])
+  article KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, articleId])
+}
+
+model KnowledgeArticleQuiz {
+  id            String   @id @default(cuid())
+  articleId     String
+  question      String
+  type          String   @default("SHORT_ANSWER")
+  options       String?
+  correctAnswer String?
+  gradingType   String   @default("NONE")
+  isDraft       Boolean  @default(true)
+  order         Int
+  createdAt     DateTime @default(now())
+
+  article KnowledgeArticle @relation(fields: [articleId], references: [id])
+}
+
+model ArticleFAQ {
+  id        String           @id @default(cuid())
+  articleId String
+  question  String
+  answer    String
+  order     Int              @default(0)
+  createdAt DateTime         @default(now())
+
+  article KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+}
+
+model HireHistory {
+  id        String   @id @default(cuid())
+  newHireId String
+  userId    String
+  userName  String
+  action    String
+  oldValue  String?
+  newValue  String?
+  createdAt DateTime @default(now())
+
+  newHire NewHire @relation(fields: [newHireId], references: [id])
+}
+
+model Mentor {
+  id        String   @id @default(cuid())
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model Performance {
+  id           String   @id @default(cuid())
+  newHireId    String
+  type         String   @default("KPI") // "KPI" | "CERT"
+  period       Int      // 1, 2, 3, 4  (for CERT: attempt number)
+  periodLabel  String   // e.g. "July 2026"  (for CERT: "1st Attempt — GD Certification")
+  startDate    DateTime
+  endDate      DateTime
+  aht          Float?   // Average Handling Time
+  str          Float?   // Single Touch Resolution %
+  mistakeRate  Float?   // Mistake Rate %
+  adherence    Float?   // Adherence %
+  fcr          Float?   // First Call Resolution %
+  notes        String?
+  updatedById  String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+
+  newHire   NewHire @relation(fields: [newHireId], references: [id])
+  updatedBy User?   @relation(fields: [updatedById], references: [id])
+}
+
+model TrainingModule {
+  id               String   @id @default(cuid())
+  title            String
+  description      String?
+  category         String   // GD | COS | MENU | GENERAL
+  order            Int
+  requiredForRoles String   @default("ALL") // JSON array: ["COS","PIS"] or "ALL"
+  isActive         Boolean  @default(true)
+  createdById      String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  createdBy User            @relation(fields: [createdById], references: [id])
+  topics    TrainingTopic[]
+}
+
+model TrainingTopic {
+  id                   String   @id @default(cuid())
+  moduleId             String
+  title                String
+  content              String?
+  fileLink             String?
+  order                Int
+  isActive             Boolean  @default(true)
+  minQuestionsRequired Int      @default(0)
+  videoUrl             String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  module          TrainingModule        @relation(fields: [moduleId], references: [id])
+  acknowledgments TopicAcknowledgment[]
+  slides          TopicSlide[]
+  slideProgress   SlideProgress[]
+  questions       TopicQuestion[]
+}
+
+model TopicAcknowledgment {
+  id             String   @id @default(cuid())
+  topicId        String
+  newHireId      String
+  acknowledgedAt DateTime @default(now())
+
+  topic   TrainingTopic @relation(fields: [topicId], references: [id])
+  newHire NewHire       @relation(fields: [newHireId], references: [id])
+
+  @@unique([topicId, newHireId])
+}
+
+model TopicSlide {
+  id       String  @id @default(cuid())
+  topicId  String
+  imageUrl String
+  caption  String?
+  order    Int
+
+  topic TrainingTopic @relation(fields: [topicId], references: [id])
+}
+
+model SlideProgress {
+  id              String   @id @default(cuid())
+  topicId         String
+  newHireId       String
+  maxSlideReached Int      @default(0)
+  updatedAt       DateTime @updatedAt
+
+  topic   TrainingTopic @relation(fields: [topicId], references: [id])
+  newHire NewHire       @relation(fields: [newHireId], references: [id])
+
+  @@unique([topicId, newHireId])
+}
+
+model TopicQuestion {
+  id            String  @id @default(cuid())
+  topicId       String
+  question      String
+  type          String  @default("SHORT_ANSWER")
+  options       String?
+  imageUrl      String?
+  order         Int
+  gradingType   String  @default("NONE")
+  correctAnswer String?
+  isRequired    Boolean @default(false)
+  isDraft       Boolean @default(false)
+
+  topic   TrainingTopic         @relation(fields: [topicId], references: [id])
+  answers TopicQuestionAnswer[]
+}
+
+model TopicQuestionAnswer {
+  id         String   @id @default(cuid())
+  questionId String
+  newHireId  String
+  answer     String
+  updatedAt  DateTime @updatedAt
+
+  question TopicQuestion @relation(fields: [questionId], references: [id])
+  newHire  NewHire       @relation(fields: [newHireId], references: [id])
+
+  @@unique([questionId, newHireId])
+}
+
+model Announcement {
+  id          String   @id @default(cuid())
+  title       String
+  content     String
+  createdAt   DateTime @default(now())
+  createdById String
+
+  createdBy User               @relation(fields: [createdById], references: [id])
+  quizzes   AnnouncementQuiz[]
+}
+
+model AnnouncementQuiz {
+  id             String       @id @default(cuid())
+  announcementId String
+  question       String
+  type           String       // "SELECT" | "MULTI_SELECT"
+  options        String?      // JSON array string
+  correctAnswer  String?
+  gradingType    String       @default("EXACT")
+  isDraft        Boolean      @default(true)
+  order          Int          @default(0)
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+}
+
+model KnowledgeQuizAttempt {
+  id          String   @id @default(cuid())
+  userId      String
+  articleId   String
+  score       Int
+  total       Int
+  completedAt DateTime @default(now())
+
+  user    User             @relation(fields: [userId], references: [id])
+  article KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, articleId])
+}
+
+// Per-role page access configuration
+// role: COS_I | COS_II | COM | COSTL
+// page: dashboard | schedule | knowledge | announcements | training | admin
+model RoleAccess {
+  id      String  @id @default(cuid())
+  role    String
+  page    String
+  enabled Boolean @default(false)
+
+  @@unique([role, page])
+}
