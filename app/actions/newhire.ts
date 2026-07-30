@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { calculateTrainingSchedule, HireRole } from "@/lib/training";
-import { createOnboardingTicket } from "@/lib/jira";
+import { createOnboardingTicket, addJiraComment } from "@/lib/jira";
 import { createDay1GMeet, createMeetAndGreetSession, addAttendeeToEvent, createOneOnOneSession } from "@/lib/gcal";
 import { parseLocalDate, toInputDate } from "@/lib/dates";
 import {
@@ -187,6 +187,7 @@ export async function createNewHire(prevState: unknown, formData: FormData) {
   const equipmentDelivery = formData.get("equipmentDelivery") as string;
   const equipmentDeliveryAddress = formData.get("equipmentDeliveryAddress") as string;
   const personalPhone = formData.get("personalPhone") as string;
+  const additionalComment = ((formData.get("additionalComment") as string | null) ?? "").trim();
 
   // Create Jira ticket
   const jira = await createOnboardingTicket({
@@ -342,6 +343,10 @@ export async function createNewHire(prevState: unknown, formData: FormData) {
     jiraTicketId: jira?.ticketId ?? null,
     jiraTicketUrl: jira?.ticketUrl ?? null,
   });
+
+  if (additionalComment && jira?.ticketId) {
+    addJiraComment(jira.ticketId, additionalComment);
+  }
 
   revalidatePath("/dashboard");
   return { success: true, id: newHire.id };
@@ -995,5 +1000,23 @@ export async function requestJoinDate(formData: FormData) {
     );
   }
 
+  return { success: true };
+}
+
+
+export async function postJiraComment(newHireId: string, comment: string) {
+  const session = await getSession();
+  if (!session) return { error: "Not authenticated" };
+  if (!comment.trim()) return { error: "Comment cannot be empty" };
+
+  const hire = await prisma.newHire.findUnique({
+    where: { id: newHireId },
+    select: { jiraTicketId: true },
+  });
+  if (!hire?.jiraTicketId) return { error: "No Jira ticket linked to this hire" };
+
+  const authoredComment = `[${session.name}]: ${comment}`;
+  const ok = await addJiraComment(hire.jiraTicketId, authoredComment);
+  if (!ok) return { error: "Failed to post comment to Jira" };
   return { success: true };
 }

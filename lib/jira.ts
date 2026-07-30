@@ -109,7 +109,7 @@ export async function createOnboardingTicket(hire: {
         serviceDeskId: SERVICE_DESK_ID,
         requestTypeId: REQUEST_TYPE_ID,
         requestFieldValues: {
-          summary: `Employee On-boarding Request - ${hire.name}`,
+          summary: `Onboarding - ${hire.name} (${hire.employeeType ?? "Agent"} in ${hire.location ?? ""} - ${hire.site ?? ""} on ${hire.joinDate.toISOString().split("T")[0]})`,
         },
       }),
     });
@@ -175,5 +175,41 @@ export async function createOnboardingTicket(hire: {
   } catch (e) {
     console.error("Jira API error:", e);
     return null;
+  }
+}
+
+export async function getJiraComments(ticketId: string): Promise<{ author: string; body: string; created: string }[]> {
+  if (!JIRA_API_TOKEN) return [];
+  try {
+    const res = await fetch(`${JIRA_BASE_URL}/rest/servicedeskapi/request/${ticketId}/comment?expand=participant`, {
+      headers: { Authorization: authHeader(), Accept: "application/json", "X-Atlassian-Token": "no-check" },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.values ?? []).map((c: { author?: { displayName?: string }; body?: string; created?: string }) => ({
+      author: c.author?.displayName ?? "Unknown",
+      body: c.body ?? "",
+      created: c.created ?? "",
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function addJiraComment(ticketId: string, body: string): Promise<boolean> {
+  if (!JIRA_API_TOKEN) return false;
+  try {
+    const res = await fetch(`${JIRA_BASE_URL}/rest/servicedeskapi/request/${ticketId}/comment`, {
+      method: "POST",
+      headers: {
+        Authorization: authHeader(),
+        "Content-Type": "application/json",
+        "X-Atlassian-Token": "no-check",
+      },
+      body: JSON.stringify({ body, public: true }),
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
 }

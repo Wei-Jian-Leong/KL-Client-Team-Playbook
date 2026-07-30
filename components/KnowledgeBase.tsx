@@ -3,7 +3,8 @@
 import { useState, useMemo, useRef, useTransition, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Fuse from "fuse.js";
-import { updateKnowledgeArticle, deleteKnowledgeFile, createKnowledgeArticle, approveKnowledgeQuizQuestion, deleteKnowledgeQuizQuestion, updateKnowledgeQuizQuestion, submitQuizAttempt, getQuizCompletionList, publishKnowledgeArticle, triggerKnowledgeQuizDraft, addKnowledgeQuizQuestion, markArticleRead, addArticleFAQ, updateArticleFAQ, deleteArticleFAQ, publishZhTranslation, updateZhTranslation, updatePublishedZhTranslation, retranslateArticle } from "@/app/actions/knowledge";
+import { updateKnowledgeArticle, deleteKnowledgeFile, createKnowledgeArticle, approveKnowledgeQuizQuestion, deleteKnowledgeQuizQuestion, updateKnowledgeQuizQuestion, submitQuizAttempt, getQuizCompletionList, publishKnowledgeArticle, triggerKnowledgeQuizDraft, addKnowledgeQuizQuestion, markArticleRead, addArticleFAQ, updateArticleFAQ, deleteArticleFAQ, publishZhTranslation, updateZhTranslation, updatePublishedZhTranslation, retranslateArticle, addTalkTrack, updateTalkTrack, deleteTalkTrack, generateTalkTrack, getTalkTrackMemories, checkTermSubstitutions, addGlossaryTerm } from "@/app/actions/knowledge";
+import TranslationGlossaryPanel from "@/components/TranslationGlossaryPanel";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
@@ -14,6 +15,7 @@ import { Mark, Node as TiptapNode, Editor, InputRule, markInputRule } from "@tip
 type SlackFile = { id: string; name: string; mimeType: string };
 
 type FAQ = { id: string; question: string; answer: string; order: number };
+type TalkTrack = { id: string; content: string; aiDraft: string | null; language: string; order: number };
 
 type QuizQuestion = {
   id: string;
@@ -47,9 +49,11 @@ type Article = {
   changeNotesZh: string | null;
   quizQuestions: QuizQuestion[];
   faqs: FAQ[];
+  talkTracks: TalkTrack[];
 };
 
 const ALL_CATS = ["ALL", "GD", "COS", "CMA", "DE"];
+const CAT_LABEL: Record<string, string> = { DE: "Tarro Delivery" };
 
 type CompletionAttempt = {
   id: string;
@@ -207,13 +211,17 @@ function CompletionList({ articles }: { articles: Article[] }) {
   );
 }
 
-type UserAttempt = { articleId: string; score: number; total: number; completedAt: Date };
+export type UserAttempt = { articleId: string; score: number; total: number; completedAt: Date };
+export type { Article };
 
 export default function KnowledgeBase({ articles, isAdmin, userAttempts = [], userReads = [] }: { articles: Article[]; isAdmin: boolean; userAttempts?: UserAttempt[]; userReads?: string[] }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("ALL");
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [sortBy, setSortBy] = useState<"number" | "date">("number");
   const [lang, setLang] = useState<"en" | "zh">("en");
   const [showNewArticle, setShowNewArticle] = useState(false);
+  const [showGlossary, setShowGlossary] = useState(false);
   const [activeTab, setActiveTab] = useState<"articles" | "completions">("articles");
 
   // View mode — default to "list" on server; sync from localStorage after mount to avoid hydration mismatch
@@ -358,9 +366,18 @@ export default function KnowledgeBase({ articles, isAdmin, userAttempts = [], us
     }
 
     if (category !== "ALL") list = list.filter((a) => a.category === category);
+    if (unreadOnly) list = list.filter((a) => !userReads.includes(a.id) && !a.isDraft && !a.isArchived);
+
+    if (sortBy === "date") {
+      list = [...list].sort((a, b) => {
+        const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : new Date(a.date).getTime();
+        const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : new Date(b.date).getTime();
+        return tb - ta;
+      });
+    }
 
     return list;
-  }, [query, category, articles, fuse]);
+  }, [query, category, unreadOnly, sortBy, articles, fuse, userReads]);
 
   const noMatch = query.trim().length > 0 && results.length === 0;
 
@@ -411,98 +428,147 @@ export default function KnowledgeBase({ articles, isAdmin, userAttempts = [], us
 
       <div style={{ display: activeTab === "articles" ? undefined : "none" }}>
       {/* Sticky search + filter bar */}
-      <div className="-mx-6 px-6 py-3 bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800 mb-5">
-        {/* Single toolbar row: search | pills | controls */}
+      <div className="-mx-6 px-6 pt-3 pb-2.5 bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800 mb-5 flex flex-col gap-2">
+
+        {/* Row 1 — search + view controls */}
         <div className="flex items-center gap-2">
-            {/* Search input — fixed width */}
-            <div className="relative shrink-0 w-56">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-3.5 h-3.5 pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
-              </svg>
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search…"
-                className="w-full pl-8 pr-8 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent shadow-sm"
-              />
-              {query && (
-                <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-600 text-xs transition-colors">✕</button>
-              )}
-            </div>
-
-            {/* Category pills — scrollable middle section */}
-            <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-              {ALL_CATS.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setCategory(cat)}
-                  className={`text-xs px-2.5 py-1 rounded-full font-medium transition-all shrink-0 ${
-                    category === cat
-                      ? "bg-indigo-600 text-white shadow-sm"
-                      : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-600"
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-
-            {/* Right controls */}
-            <div className="flex items-center gap-2 shrink-0">
-              {/* Card density — only in card view */}
-              {view === "card" && (
-                <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 gap-0.5">
-                  {(["3", "5"] as const).map(d => (
-                    <button key={d} onClick={() => setDensityPersisted(d)} title={d === "3" ? "Spacious (3 per row)" : "Compact (5 per row)"}
-                      className={`text-xs px-2 py-1 rounded-md font-semibold transition-colors ${density === d ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"}`}>
-                      {d}×
-                    </button>
-                  ))}
-                </div>
-              )}
-              {/* View switcher */}
-              <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 gap-0.5">
-                <button onClick={() => setViewPersisted("list")} title="List view"
-                  className={`p-1.5 rounded-md transition-colors ${view === "list" ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"}`}>
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="2" rx="1" fill="currentColor" opacity=".8"/><rect x="1" y="7" width="14" height="2" rx="1" fill="currentColor" opacity=".8"/><rect x="1" y="12" width="14" height="2" rx="1" fill="currentColor" opacity=".8"/></svg>
-                </button>
-                <button onClick={() => setViewPersisted("card")} title="Card view"
-                  className={`p-1.5 rounded-md transition-colors ${view === "card" ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"}`}>
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity=".8"/><rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity=".8"/><rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".8"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".8"/></svg>
-                </button>
-                <button onClick={() => setViewPersisted("table")} title="Table view"
-                  className={`p-1.5 rounded-md transition-colors ${view === "table" ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"}`}>
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="14" height="3" rx="1" fill="currentColor" opacity=".8"/><rect x="1" y="6" width="14" height="2" rx="1" fill="currentColor" opacity=".4"/><rect x="1" y="10" width="14" height="2" rx="1" fill="currentColor" opacity=".4"/><rect x="1" y="14" width="14" height="1" rx=".5" fill="currentColor" opacity=".2"/></svg>
-                </button>
-              </div>
-              <div className="flex items-center gap-0">
-                <button
-                  onClick={() => setLang("en")}
-                  className={`text-xs px-2.5 py-1 rounded-l-lg border font-medium transition-all ${lang === "en" ? "bg-indigo-600 text-white border-indigo-600" : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-600"}`}
-                >EN</button>
-                <button
-                  onClick={() => setLang("zh")}
-                  className={`text-xs px-2.5 py-1 rounded-r-lg border-t border-b border-r font-medium transition-all ${lang === "zh" ? "bg-indigo-600 text-white border-indigo-600" : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-600"}`}
-                >中文</button>
-              </div>
-              <span className="text-xs text-gray-400 dark:text-gray-500">
-                {query.trim() || category !== "ALL"
-                  ? `${results.length} result${results.length !== 1 ? "s" : ""}`
-                  : `${articles.length} articles`}
-              </span>
-              {isAdmin && (
-                <button onClick={() => setShowNewArticle(true)}
-                  className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  New
-                </button>
-              )}
-            </div>
+          {/* Search input */}
+          <div className="relative shrink-0 w-56">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-3.5 h-3.5 pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+            </svg>
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search…"
+              className="w-full pl-8 pr-8 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent shadow-sm"
+            />
+            {query && (
+              <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-600 text-xs transition-colors">✕</button>
+            )}
           </div>
+
+          <div className="flex-1" />
+
+          {/* Language toggle */}
+          <div className="flex items-center">
+            <button
+              onClick={() => setLang("en")}
+              className={`text-xs px-2.5 py-1 rounded-l-lg border font-medium transition-all ${lang === "en" ? "bg-indigo-600 text-white border-indigo-600" : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-600"}`}
+            >EN</button>
+            <button
+              onClick={() => setLang("zh")}
+              className={`text-xs px-2.5 py-1 rounded-r-lg border-t border-b border-r font-medium transition-all ${lang === "zh" ? "bg-indigo-600 text-white border-indigo-600" : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-600"}`}
+            >中文</button>
+          </div>
+
+          {/* Glossary (admin only) */}
+          {isAdmin && (
+            <button
+              onClick={() => setShowGlossary(true)}
+              title="Translation glossary & memory"
+              className="p-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-300 dark:hover:border-indigo-600 transition-colors"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+              </svg>
+            </button>
+          )}
+
+          {/* View switcher */}
+          <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 gap-0.5">
+            <button onClick={() => setViewPersisted("list")} title="List view"
+              className={`p-1.5 rounded-md transition-colors ${view === "list" ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"}`}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="2" rx="1" fill="currentColor" opacity=".8"/><rect x="1" y="7" width="14" height="2" rx="1" fill="currentColor" opacity=".8"/><rect x="1" y="12" width="14" height="2" rx="1" fill="currentColor" opacity=".8"/></svg>
+            </button>
+            <button onClick={() => setViewPersisted("card")} title="Card view"
+              className={`p-1.5 rounded-md transition-colors ${view === "card" ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"}`}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity=".8"/><rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity=".8"/><rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".8"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".8"/></svg>
+            </button>
+            <button onClick={() => setViewPersisted("table")} title="Table view"
+              className={`p-1.5 rounded-md transition-colors ${view === "table" ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"}`}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="14" height="3" rx="1" fill="currentColor" opacity=".8"/><rect x="1" y="6" width="14" height="2" rx="1" fill="currentColor" opacity=".4"/><rect x="1" y="10" width="14" height="2" rx="1" fill="currentColor" opacity=".4"/><rect x="1" y="14" width="14" height="1" rx=".5" fill="currentColor" opacity=".2"/></svg>
+            </button>
+          </div>
+
+          {/* Admin New button */}
+          {isAdmin && (
+            <button onClick={() => setShowNewArticle(true)}
+              className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              New
+            </button>
+          )}
+        </div>
+
+        {/* Row 2 — filter pills + display options */}
+        <div className="flex items-center gap-2">
+          {/* Category + Unread pills — scrollable */}
+          <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+            {ALL_CATS.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => { setCategory(cat); setUnreadOnly(false); }}
+                className={`text-xs px-2.5 py-1 rounded-full font-medium transition-all shrink-0 ${
+                  category === cat && !unreadOnly
+                    ? "bg-indigo-600 text-white shadow-sm"
+                    : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-600"
+                }`}
+              >
+                {CAT_LABEL[cat] ?? cat}
+              </button>
+            ))}
+            {!isAdmin && unreadCount > 0 && (
+              <button
+                onClick={() => { setUnreadOnly(v => !v); setCategory("ALL"); }}
+                className={`text-xs px-2.5 py-1 rounded-full font-medium transition-all shrink-0 flex items-center gap-1 ${
+                  unreadOnly
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 border border-blue-300 dark:border-blue-600 hover:border-blue-500"
+                }`}
+              >
+                Unread
+                <span className={`text-[10px] font-bold px-1 py-0.5 rounded-full ${unreadOnly ? "bg-white/30" : "bg-blue-100 dark:bg-blue-900/40"}`}>
+                  {unreadCount}
+                </span>
+              </button>
+            )}
+          </div>
+
+          {/* Display options — density, sort, count */}
+          <div className="flex items-center gap-2 shrink-0">
+            {view === "card" && (
+              <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 gap-0.5">
+                {(["3", "5"] as const).map(d => (
+                  <button key={d} onClick={() => setDensityPersisted(d)} title={d === "3" ? "Spacious (3 per row)" : "Compact (5 per row)"}
+                    className={`text-xs px-2 py-1 rounded-md font-semibold transition-colors ${density === d ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"}`}>
+                    {d}×
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => setSortBy(s => s === "number" ? "date" : "number")}
+              title={sortBy === "date" ? "Sorted by date — click for default" : "Sort by date"}
+              className={`flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg border font-medium transition-all ${sortBy === "date" ? "bg-indigo-600 text-white border-indigo-600" : "bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-600"}`}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18M7 12h10M11 18h2"/>
+              </svg>
+            </button>
+            <span className="text-xs text-gray-400 dark:text-gray-500">
+              {query.trim() || category !== "ALL"
+                ? `${results.length} result${results.length !== 1 ? "s" : ""}`
+                : `${articles.length} articles`}
+            </span>
+          </div>
+        </div>
+
       </div>
 
       {showNewArticle && <NewArticleModal onClose={() => setShowNewArticle(false)} onViewArticle={(id) => setOpenArticleId(id)} />}
+      {showGlossary && <TranslationGlossaryPanel onClose={() => setShowGlossary(false)} />}
 
       {/* No results */}
       {noMatch && (
@@ -539,42 +605,55 @@ export default function KnowledgeBase({ articles, isAdmin, userAttempts = [], us
                 const isRead = userReads.includes(a.id);
                 const showZh = lang === "zh" && !!a.titleZh && (!a.zhDraft || isAdmin);
                 return (
-                  <button key={a.id} onClick={() => setOpenArticleId(a.id)}
-                    className={`text-left bg-white dark:bg-gray-900 rounded-xl border-l-4 border border-gray-200 dark:border-gray-700 ${accent} p-4 hover:shadow-md transition-shadow flex flex-col gap-2.5 cursor-pointer`}>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${badge}`}>{a.category}</span>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {isAdmin && a.isDraft && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300 rounded-full font-semibold">Draft</span>}
-                        {!isAdmin && !isRead && !a.isDraft && !a.isArchived && <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 rounded-full font-semibold">New</span>}
-                        {!isAdmin && isRead && <span className="text-[10px] px-1.5 py-0.5 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 rounded-full font-medium">✓</span>}
-                      </div>
-                    </div>
-                    <p className={`text-sm font-semibold text-gray-900 dark:text-white line-clamp-2 leading-snug${showZh ? " lang-zh" : ""}`}>
-                      {showZh ? a.titleZh : a.title}
-                    </p>
-                    {density === "3" && (showZh ? a.contentZh : a.content) && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
-                        {toPlainText((showZh ? a.contentZh : a.content) ?? "").slice(0, 120)}
-                      </p>
-                    )}
-                    <div className="mt-auto flex items-center justify-between gap-2 pt-1">
-                      {a.updatedAt ? (
-                        <div className="relative group/dates inline-flex items-center" onClick={e => e.stopPropagation()}>
-                          <span className="text-xs text-gray-400 dark:text-gray-500 cursor-default underline decoration-dotted underline-offset-2">
-                            {new Date(a.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                          </span>
-                          <div className="absolute top-full left-0 mt-1 hidden group-hover/dates:block z-30 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-2.5 min-w-max text-xs text-gray-600 dark:text-gray-300 space-y-1 pointer-events-none">
-                            <div className="font-medium text-gray-500 dark:text-gray-400 pb-1 border-b border-gray-100 dark:border-gray-700">Date history</div>
-                            <div>📄 Created: {fmtDate(a.date)}</div>
-                            {buildUpdateHistory(a).map(d => <div key={d}>✏️ Updated: {fmtDateIso(d)}</div>)}
-                          </div>
+                  <div key={a.id} className={`relative bg-white dark:bg-gray-900 rounded-xl border-l-4 border border-gray-200 dark:border-gray-700 ${accent} hover:shadow-md transition-shadow`}>
+                    <button onClick={() => setOpenArticleId(a.id)} className="text-left w-full p-4 flex flex-col gap-2.5 cursor-pointer">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${badge}`}>{CAT_LABEL[a.category] ?? a.category}</span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isAdmin && a.isDraft && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300 rounded-full font-semibold">Draft</span>}
                         </div>
-                      ) : (
-                        <span className="text-xs text-gray-400 dark:text-gray-500">{fmtDate(a.date)}</span>
+                      </div>
+                      <p className={`text-sm font-semibold text-gray-900 dark:text-white line-clamp-2 leading-snug${showZh ? " lang-zh" : ""}`}>
+                        {showZh ? a.titleZh : a.title}
+                      </p>
+                      {density === "3" && (showZh ? a.contentZh : a.content) && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
+                          {toPlainText((showZh ? a.contentZh : a.content) ?? "").slice(0, 120)}
+                        </p>
                       )}
-                      {noStr && <span className="text-[10px] font-mono text-gray-300 dark:text-gray-600">#{noStr}</span>}
-                    </div>
-                  </button>
+                      <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+                        {a.updatedAt ? (
+                          <div className="relative group/dates inline-flex items-center" onClick={e => e.stopPropagation()}>
+                            <span className="text-xs text-gray-400 dark:text-gray-500 cursor-default underline decoration-dotted underline-offset-2">
+                              {new Date(a.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                            </span>
+                            <div className="absolute top-full left-0 mt-1 hidden group-hover/dates:block z-30 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-2.5 min-w-max text-xs text-gray-600 dark:text-gray-300 space-y-1 pointer-events-none">
+                              <div className="font-medium text-gray-500 dark:text-gray-400 pb-1 border-b border-gray-100 dark:border-gray-700">Date history</div>
+                              <div>📄 Created: {fmtDate(a.date)}</div>
+                              {buildUpdateHistory(a).map(d => <div key={d}>✏️ Updated: {fmtDateIso(d)}</div>)}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400 dark:text-gray-500">{fmtDate(a.date)}</span>
+                        )}
+                        {noStr && <span className="text-[10px] font-mono text-gray-300 dark:text-gray-600">#{noStr}</span>}
+                      </div>
+                    </button>
+                    <a
+                      href={`/knowledge/${a.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open in new tab"
+                      onClick={e => e.stopPropagation()}
+                      className="absolute top-2 right-2 p-1 rounded text-gray-300 dark:text-gray-600 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                        <polyline points="15 3 21 3 21 9"/>
+                        <line x1="10" y1="14" x2="21" y2="3"/>
+                      </svg>
+                    </a>
+                  </div>
                 );
               })}
             </div>
@@ -592,6 +671,7 @@ export default function KnowledgeBase({ articles, isAdmin, userAttempts = [], us
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Category</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Date</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Status</th>
+                  <th className="px-2 py-2.5 w-8"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -607,7 +687,7 @@ export default function KnowledgeBase({ articles, isAdmin, userAttempts = [], us
                       <td className="px-4 py-2.5 font-medium text-gray-900 dark:text-white max-w-xs truncate">
                         <span className={showZh ? "lang-zh" : ""}>{showZh ? a.titleZh : a.title}</span>
                       </td>
-                      <td className="px-4 py-2.5"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge}`}>{a.category}</span></td>
+                      <td className="px-4 py-2.5"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge}`}>{CAT_LABEL[a.category] ?? a.category}</span></td>
                       <td className="px-4 py-2.5 text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">
                         {a.updatedAt ? (
                           <div className="relative group/dates inline-flex items-center">
@@ -623,10 +703,22 @@ export default function KnowledgeBase({ articles, isAdmin, userAttempts = [], us
                         ) : fmtDate(a.date)}
                       </td>
                       <td className="px-4 py-2.5">
-                        {isAdmin && a.isDraft ? <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300 rounded-full font-semibold">Draft</span>
-                          : !isAdmin && !isRead && !a.isDraft ? <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 rounded-full font-semibold">New</span>
-                          : !isAdmin && isRead ? <span className="text-[10px] px-1.5 py-0.5 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 rounded-full">✓ Read</span>
-                          : null}
+                        {isAdmin && a.isDraft ? <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300 rounded-full font-semibold">Draft</span> : null}
+                      </td>
+                      <td className="px-2 py-2.5" onClick={e => e.stopPropagation()}>
+                        <a
+                          href={`/knowledge/${a.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open in new tab"
+                          className="flex items-center justify-center p-1 rounded text-gray-300 dark:text-gray-600 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                            <polyline points="15 3 21 3 21 9"/>
+                            <line x1="10" y1="14" x2="21" y2="3"/>
+                          </svg>
+                        </a>
                       </td>
                     </tr>
                   );
@@ -1114,7 +1206,7 @@ function KBRichTextEditor({ value, onChange, imageFiles = [], articleId, onUploa
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
       Underline,
       Link.configure({ openOnClick: false, HTMLAttributes: { class: "text-indigo-600 dark:text-indigo-400 underline" } }),
-      Image.configure({ allowBase64: true, HTMLAttributes: { class: "max-w-full rounded-lg my-2" } }),
+      Image.configure({ allowBase64: true, HTMLAttributes: { class: "rounded-lg my-2" } }),
       KBVideo,
       TagMention,
     ],
@@ -1436,7 +1528,7 @@ function NewArticleModal({ onClose, onViewArticle }: { onClose: () => void; onVi
               <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block">Category</label>
               <select value={category} onChange={e => setCategory(e.target.value)}
                 className="w-full text-sm px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                {["GD","COS","CMA","DE"].map(c => <option key={c}>{c}</option>)}
+                {["GD","COS","CMA","DE"].map(c => <option key={c} value={c}>{CAT_LABEL[c] ?? c}</option>)}
               </select>
             </div>
             <div>
@@ -1576,12 +1668,12 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
   );
 }
 
-function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, userReads = [], lang = "en", forceExpanded = false, inModal = false, onOpenModal, onViewArticle }: { article: Article; isAdmin: boolean; userAttempts: UserAttempt[]; autoOpen?: boolean; userReads?: string[]; lang?: "en" | "zh"; forceExpanded?: boolean; inModal?: boolean; onOpenModal?: () => void; onViewArticle?: (id: string) => void }) {
+export function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, userReads = [], lang = "en", forceExpanded = false, inModal = false, onOpenModal, onViewArticle }: { article: Article; isAdmin: boolean; userAttempts: UserAttempt[]; autoOpen?: boolean; userReads?: string[]; lang?: "en" | "zh"; forceExpanded?: boolean; inModal?: boolean; onOpenModal?: () => void; onViewArticle?: (id: string) => void }) {
   const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const isExpanded = forceExpanded || expanded;
   const [quizOpen, setQuizOpen] = useState(false);
-  const [activeSection, setActiveSection] = useState<"article" | "media" | "faq" | "quiz">("article");
+  const [activeSection, setActiveSection] = useState<"article" | "media" | "faq" | "talktrack" | "quiz">("article");
   const [quizStep, setQuizStep] = useState(0);
   const [faqs, setFaqs] = useState<FAQ[]>(a.faqs);
   const [openFaqIds, setOpenFaqIds] = useState<Set<string>>(new Set());
@@ -1592,6 +1684,18 @@ function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, user
   const [editingFaqId, setEditingFaqId] = useState<string | null>(null);
   const [editFaqQ, setEditFaqQ] = useState("");
   const [editFaqA, setEditFaqA] = useState("");
+
+  // Talk Track state
+  const [talkTracks, setTalkTracks] = useState<TalkTrack[]>(a.talkTracks ?? []);
+  const [trackPending, startTrackTransition] = useTransition();
+  const [showAddTrack, setShowAddTrack] = useState(false);
+  const [newTrackContent, setNewTrackContent] = useState("");
+  const [newTrackAiDraft, setNewTrackAiDraft] = useState<string | null>(null);
+  const [trackGenerating, setTrackGenerating] = useState(false);
+  const [trackLanguage, setTrackLanguage] = useState<"EN" | "CN">("CN");
+  const [editingTrackId, setEditingTrackId] = useState<string | null>(null);
+  const [editTrackContent, setEditTrackContent] = useState("");
+  const [termSuggestions, setTermSuggestions] = useState<{termEn: string; termZh: string}[]>([]);
   const [zhEditOpen, setZhEditOpen] = useState(false);
   const [editTitleZh, setEditTitleZh] = useState(a.titleZh ?? "");
   const [editContentZh, setEditContentZh] = useState(a.contentZh ?? "");
@@ -1770,7 +1874,7 @@ function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, user
       <div className="flex items-stretch">
         <button onClick={() => { if (inModal) return; if (onOpenModal) { onOpenModal(); return; } setExpanded((v) => !v); }} className="flex-1 text-left px-4 py-3.5 min-w-0">
           <div className="flex items-start gap-3">
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 mt-0.5 ${badge}`}>{a.category}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 mt-0.5 ${badge}`}>{CAT_LABEL[a.category] ?? a.category}</span>
             <div className="flex-1 min-w-0 space-y-1">
               <p className={`text-sm font-semibold text-gray-900 dark:text-white leading-snug${showZh ? " lang-zh" : ""}`}>
                 {showZh ? titleZh : a.title}
@@ -1800,37 +1904,6 @@ function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, user
                   Draft
                 </span>
               )}
-              {!isAdmin && !isRead && !a.isDraft && !a.isArchived && (
-                <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 rounded-full font-semibold">
-                  New
-                </span>
-              )}
-              {!isAdmin && isRead && (
-                <span className="text-[10px] px-1.5 py-0.5 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 rounded-full font-medium">
-                  ✓ Read
-                </span>
-              )}
-              {isAdmin && quizQuestions.some(q => q.isDraft) && (
-                <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded-full font-medium">
-                  {quizQuestions.filter(q => q.isDraft).length} draft quiz
-                </span>
-              )}
-              {!isAdmin && faqs.length > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-full">
-                  {faqs.length} FAQ{faqs.length !== 1 ? "s" : ""}
-                </span>
-              )}
-              {!isAdmin && hasApprovedQuiz && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                  quizDone
-                    ? "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400"
-                    : attempt
-                    ? "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300"
-                    : "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400"
-                }`}>
-                  {quizDone ? "Quiz ✓" : attempt ? `${attempt.score}/${attempt.total}` : "Quiz"}
-                </span>
-              )}
               {noStr && (
                 <span className="text-[10px] font-mono text-gray-300 dark:text-gray-600 select-none">#{noStr}</span>
               )}
@@ -1844,6 +1917,22 @@ function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, user
           </div>
         </button>
         <div className={`flex items-stretch${inModal ? " mr-10" : ""}`}>
+          {!inModal && a.id && (
+            <a
+              href={`/knowledge/${a.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open in new tab"
+              onClick={e => e.stopPropagation()}
+              className="flex items-center px-2 border-l border-gray-100 dark:border-gray-800 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/>
+                <line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </a>
+          )}
           {a.articleNo && <CopyLinkButton articleNo={a.articleNo} />}
           {isAdmin && a.isDraft && (
             <div className="flex items-stretch border-l border-gray-100 dark:border-gray-800">
@@ -1887,6 +1976,26 @@ function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, user
       {/* Expanded content */}
       {isExpanded && (
         <div className="border-t border-gray-100 dark:border-gray-800">
+          {/* Open in new tab — visible inside expanded article */}
+          {a.id && (
+            <div className="flex justify-end px-3 pt-2">
+              <a
+                href={`/knowledge/${a.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open in new tab"
+                onClick={e => e.stopPropagation()}
+                className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                  <polyline points="15 3 21 3 21 9"/>
+                  <line x1="10" y1="14" x2="21" y2="3"/>
+                </svg>
+                Open
+              </a>
+            </div>
+          )}
           {/* Edit form */}
           {editing ? (
             <div className="px-4 pt-4 pb-3 space-y-3">
@@ -1900,7 +2009,7 @@ function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, user
                   <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block">Category</label>
                   <select value={editCategory} onChange={e => setEditCategory(e.target.value)}
                     className="w-full text-sm px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    {["GD","COS","CMA","DE"].map(c => <option key={c}>{c}</option>)}
+                    {["GD","COS","CMA","DE"].map(c => <option key={c} value={c}>{CAT_LABEL[c] ?? c}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1997,11 +2106,14 @@ function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, user
             <>
               {/* Tab bar */}
               {(() => {
-                const tabs: { key: "article" | "media" | "faq" | "quiz"; label: string }[] = [
+                const tabs: { key: "article" | "media" | "faq" | "talktrack" | "quiz"; label: string }[] = [
                   { key: "article", label: "Article" },
                 ];
                 if (isAdmin || faqs.length > 0) {
                   tabs.push({ key: "faq", label: faqs.length > 0 ? `FAQ (${faqs.length})` : "FAQ" });
+                }
+                if (isAdmin || talkTracks.length > 0) {
+                  tabs.push({ key: "talktrack", label: talkTracks.length > 0 ? `Talk Track (${talkTracks.length})` : "Talk Track" });
                 }
                 if (isAdmin || hasApprovedQuiz) {
                   const quizLabel = quizDone ? "Quiz ✓" : attempt && !quizDone ? `Quiz ${attempt.score}/${attempt.total}` : "Quiz";
@@ -2225,7 +2337,7 @@ function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, user
                               className="w-full flex items-start justify-between gap-2 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
                             >
                               <div className="flex items-start gap-2 flex-1 min-w-0">
-                                <span className="text-violet-500 dark:text-violet-400 font-bold text-sm shrink-0 mt-0.5">?</span>
+                                <svg className="text-violet-500 dark:text-violet-400 shrink-0 mt-0.5" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                                 <span className="text-sm font-medium text-gray-800 dark:text-gray-200 leading-snug">{faq.question}</span>
                               </div>
                               <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
@@ -2274,6 +2386,193 @@ function ArticleCard({ article: a, isAdmin, userAttempts, autoOpen = false, user
                     ) : (
                       <button onClick={() => setShowAddFaq(true)} title="Add FAQ"
                         className="flex items-center justify-center w-8 h-8 text-violet-500 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 border border-dashed border-violet-300 dark:border-violet-700 rounded-lg transition-colors">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+
+              {/* TALK TRACK TAB */}
+              {activeSection === "talktrack" && (
+                <div className="px-4 py-4 space-y-2">
+                  {/* Term substitution suggestions */}
+                  {termSuggestions.length > 0 && (
+                    <div className="rounded-xl border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-1.5">
+                      <p className="text-xs font-medium text-amber-700 dark:text-amber-400">Detected term substitutions not in your glossary:</p>
+                      {termSuggestions.map((s, i) => (
+                        <div key={i} className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-amber-800 dark:text-amber-300 font-mono">&quot;{s.termEn}&quot; → &quot;{s.termZh}&quot;</span>
+                          <button
+                            onClick={() => startTrackTransition(async () => {
+                              try {
+                                await addGlossaryTerm(s.termEn, s.termZh, undefined);
+                              } catch {
+                                // already exists — dismiss anyway
+                              }
+                              setTermSuggestions(prev => prev.filter((_, idx) => idx !== i));
+                            })}
+                            className="text-xs px-2 py-0.5 bg-amber-600 hover:bg-amber-700 text-white rounded font-medium transition-colors"
+                          >Add to Glossary</button>
+                          <button
+                            onClick={() => setTermSuggestions(prev => prev.filter((_, idx) => idx !== i))}
+                            className="text-xs px-2 py-0.5 border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 rounded font-medium transition-colors"
+                          >Dismiss</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {talkTracks.length === 0 && !isAdmin && (
+                    <p className="text-sm text-gray-400 dark:text-gray-500 italic">No talk tracks yet.</p>
+                  )}
+                  {talkTracks.map(track => {
+                    const isEditingThis = editingTrackId === track.id;
+                    return (
+                      <div key={track.id} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                        {isEditingThis ? (
+                          <div className="p-3 space-y-2">
+                            <textarea
+                              value={editTrackContent}
+                              onChange={e => setEditTrackContent(e.target.value)}
+                              rows={6}
+                              placeholder="Talk track script…"
+                              className="w-full text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-400 resize-y font-mono"
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  if (!editTrackContent.trim()) return;
+                                  startTrackTransition(async () => {
+                                    await updateTalkTrack(track.id, editTrackContent.trim());
+                                    setTalkTracks(prev => prev.map(t => t.id === track.id ? { ...t, content: editTrackContent.trim() } : t));
+                                    setEditingTrackId(null);
+                                  });
+                                }}
+                                disabled={trackPending}
+                                className="text-xs px-3 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded font-medium transition-colors disabled:opacity-50"
+                              >Save</button>
+                              <button
+                                onClick={() => setEditingTrackId(null)}
+                                className="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 rounded font-medium transition-colors"
+                              >Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed flex-1 font-sans">{track.content}</pre>
+                              <div className="flex items-center gap-1 shrink-0 ml-2">
+                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${track.language === "CN" ? "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400" : "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"}`}>{track.language}</span>
+                                {isAdmin && (
+                                  <>
+                                    <span
+                                      role="button"
+                                      onClick={() => { setEditTrackContent(track.content); setEditingTrackId(track.id); }}
+                                      title="Edit"
+                                      className="flex items-center justify-center w-6 h-6 border border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                                    >
+                                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                    </span>
+                                    <span
+                                      role="button"
+                                      onClick={() => startTrackTransition(async () => {
+                                        await deleteTalkTrack(track.id);
+                                        setTalkTracks(prev => prev.filter(t => t.id !== track.id));
+                                      })}
+                                      title="Delete"
+                                      className="flex items-center justify-center w-6 h-6 border border-red-300 dark:border-red-700 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                                    >
+                                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {isAdmin && (
+                    showAddTrack ? (
+                      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Language:</span>
+                            {(["CN", "EN"] as const).map(lang => (
+                              <button
+                                key={lang}
+                                onClick={() => { setTrackLanguage(lang); setNewTrackContent(""); setNewTrackAiDraft(null); }}
+                                className={`text-xs px-2 py-0.5 rounded font-semibold border transition-colors ${trackLanguage === lang ? "bg-teal-600 border-teal-600 text-white" : "border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-teal-400 dark:hover:border-teal-600"}`}
+                              >{lang}</button>
+                            ))}
+                          </div>
+                          <button
+                            onClick={async () => {
+                              setTrackGenerating(true);
+                              try {
+                                const draft = await generateTalkTrack(a.id, trackLanguage);
+                                setNewTrackContent(draft);
+                                setNewTrackAiDraft(draft);
+                              } finally {
+                                setTrackGenerating(false);
+                              }
+                            }}
+                            disabled={trackGenerating}
+                            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 bg-teal-50 dark:bg-teal-900/30 hover:bg-teal-100 dark:hover:bg-teal-900/50 text-teal-700 dark:text-teal-400 border border-teal-200 dark:border-teal-700 rounded-lg font-medium transition-colors disabled:opacity-50"
+                          >
+                            {trackGenerating ? (
+                              <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                            ) : (
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                            )}
+                            {trackGenerating ? "Generating…" : "Generate AI Draft"}
+                          </button>
+                        </div>
+                        <textarea
+                          value={newTrackContent}
+                          onChange={e => setNewTrackContent(e.target.value)}
+                          rows={6}
+                          placeholder={trackLanguage === "CN" ? "话术脚本…" : "Talk track script…"}
+                          autoFocus
+                          className="w-full text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-400 resize-y font-mono"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              if (!newTrackContent.trim()) return;
+                              const content = newTrackContent.trim();
+                              const aiDraft = newTrackAiDraft || undefined;
+                              startTrackTransition(async () => {
+                                const saved = await addTalkTrack(a.id, content, trackLanguage, aiDraft);
+                                setTalkTracks(prev => [...prev, { id: saved.id, content, aiDraft: aiDraft ?? null, language: trackLanguage, order: prev.length }]);
+                                setNewTrackContent("");
+                                setNewTrackAiDraft(null);
+                                setShowAddTrack(false);
+                                if (aiDraft && saved.id) {
+                                  const subs = await checkTermSubstitutions(saved.id);
+                                  if (subs.length > 0) setTermSuggestions(subs);
+                                }
+                              });
+                            }}
+                            disabled={trackPending || !newTrackContent.trim()}
+                            className="text-xs px-3 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded font-medium transition-colors disabled:opacity-50"
+                          >
+                            {trackPending ? "Adding…" : "Save"}
+                          </button>
+                          <button
+                            onClick={() => { setShowAddTrack(false); setNewTrackContent(""); setNewTrackAiDraft(null); }}
+                            className="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 rounded font-medium transition-colors"
+                          >Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setShowAddTrack(true)}
+                        title="Add Talk Track"
+                        className="flex items-center justify-center w-8 h-8 text-teal-500 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 border border-dashed border-teal-300 dark:border-teal-700 rounded-lg transition-colors"
+                      >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       </button>
                     )

@@ -17,7 +17,7 @@ export default async function KnowledgePage() {
   const [articles, dbUser, userAttempts, userReadRaw] = await Promise.all([
     prisma.knowledgeArticle.findMany({
       orderBy: [{ articleNo: "desc" }],
-      include: { quizQuestions: { orderBy: { order: "asc" } }, faqs: { orderBy: { order: "asc" } } },
+      include: { quizQuestions: { orderBy: { order: "asc" } }, faqs: { orderBy: { order: "asc" } }, talkTracks: { orderBy: { order: "asc" } } },
     }),
     prisma.user.findUnique({ where: { id: session.id }, select: { isAdmin: true } }),
     prisma.knowledgeQuizAttempt.findMany({

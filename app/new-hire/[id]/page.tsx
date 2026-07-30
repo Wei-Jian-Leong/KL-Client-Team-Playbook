@@ -3,6 +3,7 @@ import { getSession } from "@/lib/session";
 import { formatDate, getRoleLabel } from "@/lib/training";
 import { getDisplayStatus, STATUS_STYLES } from "@/lib/hireStatus";
 import { notFound, redirect } from "next/navigation";
+import { getJiraComments } from "@/lib/jira";
 import TaskCard from "@/components/TaskCard";
 import TrainingPhaseCard from "@/components/TrainingPhaseCard";
 import CommentSection from "@/components/CommentSection";
@@ -11,6 +12,7 @@ import EditHireDetails from "@/components/EditHireDetails";
 import BackButton from "@/components/BackButton";
 import NewHireDetailsButton from "@/components/NewHireDetailsButton";
 import HireHistoryPanel from "@/components/HireHistoryPanel";
+import JiraCommentPanel from "@/components/JiraCommentPanel";
 
 function DetailChip({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
@@ -86,6 +88,8 @@ export default async function NewHireDetailPage({ params }: { params: Promise<{ 
       })
     : [];
 
+  const jiraComments = hire.jiraTicketId ? await getJiraComments(hire.jiraTicketId) : [];
+
   const isHR = session.team === "HR";
   const isCosTraining = session.team === "COS_TRAINING";
   const canDelete = isHR || !!user?.isAdmin;
@@ -129,6 +133,16 @@ export default async function NewHireDetailPage({ params }: { params: Promise<{ 
                 </a>
               )}
             </div>
+            {hire.jiraTicketId && (
+              <div className="mt-3">
+                <JiraCommentPanel
+                  newHireId={hire.id}
+                  jiraTicketId={hire.jiraTicketId}
+                  initialComments={jiraComments}
+                  canComment={!!(isHR || user?.isAdmin)}
+                />
+              </div>
+            )}
             {(ds === "RESIGNED" || ds === "DELETED") && hire.deleteReason && (
               <p className="text-sm text-red-600 dark:text-red-400 mt-2">
                 {hire.deleteReason}

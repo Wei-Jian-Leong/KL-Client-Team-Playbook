@@ -49,12 +49,12 @@ body {
 .rte-content h1         { font-size: 1.2em; font-weight: 700; margin-bottom: 0.4em; }
 .rte-content h2         { font-size: 1.1em; font-weight: 600; margin-bottom: 0.3em; }
 .rte-content h3         { font-size: 1em; font-weight: 600; margin-bottom: 0.3em; }
-.rte-content img        { max-width: 100%; border-radius: 8px; margin: 0.5em 0; display: block; cursor: zoom-in; }
+.rte-content img        { max-width: 320px !important; max-height: 220px !important; width: auto !important; height: auto !important; border-radius: 8px; margin: 0.5em 0; display: block; cursor: zoom-in; transition: opacity 0.15s; }
+.rte-content img:hover  { opacity: 0.85; }
 
 .dark .rte-content code { background: #374151; }
 .dark .rte-content a    { color: #818cf8; }
 .dark .rte-content s    { color: #6b7280; }
-.rte-content img        { max-width: 100%; border-radius: 6px; margin: 0.5em 0; display: block; cursor: zoom-in; }
 .rte-content video      { max-width: 100%; border-radius: 6px; margin: 0.5em 0; display: block; }
 .tiptap img             { max-width: 100%; border-radius: 6px; margin: 0.5em 0; display: block; }
 .tiptap video           { max-width: 100%; border-radius: 6px; margin: 0.5em 0; display: block; }

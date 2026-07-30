@@ -438,6 +438,19 @@ export default function NewHireForm({ joinDateSlots, hireLimit = 5, isAdmin = fa
               </div>
             </div>
 
+            {/* Additional Comments */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Additional Comments <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <textarea
+                name="additionalComment"
+                rows={3}
+                placeholder="Any extra notes for the IT team..."
+                className="w-full border border-gray-300 dark:border-gray-600 rounded-xl px-4 py-2.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"
+              />
+            </div>
+
             {employeeType === "Non-agent" && (
               <div className="space-y-4 pt-1">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

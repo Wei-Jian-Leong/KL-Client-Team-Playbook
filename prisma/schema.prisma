@@ -243,10 +243,16 @@ model KnowledgeArticle {
   slackMessageTs String?
   updateHistory  String?
 
-  quizQuestions KnowledgeArticleQuiz[]
-  quizAttempts  KnowledgeQuizAttempt[]
-  reads         ArticleRead[]
-  faqs          ArticleFAQ[]
+  aiTitleZh          String?
+  aiContentZh        String?
+
+  quizQuestions      KnowledgeArticleQuiz[]
+  quizAttempts       KnowledgeQuizAttempt[]
+  reads              ArticleRead[]
+  faqs               ArticleFAQ[]
+  talkTracks         ArticleTalkTrack[]
+  translationMemory  TranslationMemory[]
+  talkTrackMemory    TalkTrackMemory[]
 }
 
 model ArticleRead {
@@ -467,6 +473,50 @@ model KnowledgeQuizAttempt {
   article KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
 
   @@unique([userId, articleId])
+}
+
+model ArticleTalkTrack {
+  id        String           @id @default(cuid())
+  articleId String
+  content   String
+  aiDraft   String?
+  language  String           @default("CN")
+  order     Int              @default(0)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  article KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+}
+
+model TranslationGlossary {
+  id        String   @id @default(cuid())
+  termEn    String   // comma-separated variants e.g. "client,clients,customer"
+  termZh    String   // e.g. "老板"
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TranslationMemory {
+  id           String           @id @default(cuid())
+  articleId    String
+  article      KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  aiTitleZh    String
+  aiContentZh  String?
+  pubTitleZh   String
+  pubContentZh String?
+  publishedAt  DateTime         @default(now())
+}
+
+model TalkTrackMemory {
+  id           String           @id @default(cuid())
+  articleId    String
+  language     String           @default("CN")
+  aiDraft      String
+  savedContent String
+  savedAt      DateTime         @default(now())
+
+  article KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
 }
 
 // Per-role page access configuration

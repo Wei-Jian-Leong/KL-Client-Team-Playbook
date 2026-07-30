@@ -6,7 +6,10 @@ import { revalidatePath } from "next/cache";
 import { unlink } from "fs/promises";
 import path from "path";
 import { generateKnowledgeQuizDraft } from "@/lib/generate-knowledge-quiz";
-import { translateArticleToZh } from "@/lib/translate-article";
+import { translateArticleToZh, type GlossaryTerm, type TranslationExample } from "@/lib/translate-article";
+import { pushGlossaryToSheet, pushTranslationMemoryToSheet, pushTalkTrackMemoryToSheet, isGlossarySheetConfigured } from "@/lib/gsheets";
+import { generateTalkTrackDraft } from "@/lib/generate-talk-track";
+import { detectTermSubstitutions, type TermSubstitution } from "@/lib/detect-term-substitutions";
 
 async function requireAdmin() {
   const session = await getSession();
@@ -141,9 +144,10 @@ export async function createKnowledgeArticle(data: {
   await renumberArticles();
 
   // Auto-translate to Chinese — fire-and-forget, never awaited
-  translateArticleToZh(data.title, data.content || null)
+  getTranslationContext()
+    .then(ctx => translateArticleToZh(data.title, data.content || null, ctx))
     .then(({ titleZh, contentZh }) =>
-      prisma.knowledgeArticle.update({ where: { id: article.id }, data: { titleZh, contentZh, zhDraft: true } })
+      prisma.knowledgeArticle.update({ where: { id: article.id }, data: { titleZh, contentZh, aiTitleZh: titleZh, aiContentZh: contentZh, zhDraft: true } })
     )
     .catch(() => {});
 
@@ -201,13 +205,16 @@ export async function publishKnowledgeArticle(id: string, suppress = false) {
     const imgSrcs = [...html.matchAll(/src="(\/knowledge-files\/[^"]+\.(?:jpg|jpeg|png|gif|webp|svg))"/gi)].map(m => m[1]);
     const videoSrcs = [...html.matchAll(/src="(\/knowledge-files\/[^"]+\.(?:mp4|mov|webm|avi))"/gi)].map(m => m[1]);
 
-    const blocks: object[] = [
-      { type: "header", text: { type: "plain_text", text: `📚 (New) ${article.title}` } },
+    const msgLines = [
+      `:pushpin:[New | KB] *${article.title}*`,
     ];
+    if (preview) msgLines.push("", preview);
+    msgLines.push("", "*Action Required* :+1:", "Please acknowledge this update by reacting to this post so we know you've read it. Thanks!");
+    const msgText = msgLines.join("\n");
 
-    if (preview) {
-      blocks.push({ type: "section", text: { type: "mrkdwn", text: preview } });
-    }
+    const blocks: object[] = [
+      { type: "section", text: { type: "mrkdwn", text: msgText } },
+    ];
 
     // Images and videos require a public URL — skip on localhost
     if (!isLocalhost) {
@@ -222,8 +229,6 @@ export async function publishKnowledgeArticle(id: string, suppress = false) {
       }
     }
 
-    // TODO: @tag users here
-
     try {
       const slackRes = await fetch("https://slack.com/api/chat.postMessage", {
         method: "POST",
@@ -233,8 +238,9 @@ export async function publishKnowledgeArticle(id: string, suppress = false) {
         },
         body: JSON.stringify({
           channel: "C0A0XFL3074",
-          text: `📚 New article published: *${article.title}*`,
+          text: msgText,
           blocks,
+          mrkdwn: true,
         }),
       });
       const slackJson = await slackRes.json();
@@ -356,18 +362,18 @@ export async function updateKnowledgeArticle(
 
   // Notify Slack when a published article is updated
   if (!suppress && process.env.SLACK_BOT_TOKEN && !existing?.isDraft) {
-    const replyBlocks: object[] = [
-      { type: "header", text: { type: "plain_text", text: existing?.slackMessageTs ? "✏️ Article Updated" : `✏️ (Updated) ${existing?.title ?? ""}` } },
-      { type: "section", text: { type: "mrkdwn", text: `*${existing?.title ?? ""}*` } },
+    const updateLines = [
+      `:pushpin:[Update | KB] *${existing?.title ?? ""}*`,
     ];
     const notes = changeNotes ?? existing?.changeNotes;
-    if (notes) {
-      replyBlocks.push({ type: "section", text: { type: "mrkdwn", text: `📝 *What changed:* ${notes}` } });
-    }
+    if (notes) updateLines.push("", `📝 *What changed:*\n${notes}`);
+    updateLines.push("", "*Action Required* :+1:", "Please acknowledge this update by reacting to this post so we know you've read it. Thanks!");
+    const updateText = updateLines.join("\n");
     const msgBody: Record<string, unknown> = {
       channel: "C0A0XFL3074",
-      text: `✏️ Article updated: *${existing?.title ?? ""}*`,
-      blocks: replyBlocks,
+      text: updateText,
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: updateText } }],
+      mrkdwn: true,
     };
     if (existing?.slackMessageTs) msgBody.thread_ts = existing.slackMessageTs;
     try {
@@ -560,6 +566,21 @@ export async function deleteArticleFAQ(id: string) {
 
 export async function publishZhTranslation(id: string) {
   await requireAdmin();
+  const article = await prisma.knowledgeArticle.findUnique({
+    where: { id },
+    select: { aiTitleZh: true, aiContentZh: true, titleZh: true, contentZh: true },
+  });
+  if (article?.aiTitleZh && article.titleZh) {
+    await prisma.translationMemory.create({
+      data: {
+        articleId: id,
+        aiTitleZh: article.aiTitleZh,
+        aiContentZh: article.aiContentZh,
+        pubTitleZh: article.titleZh,
+        pubContentZh: article.contentZh,
+      },
+    });
+  }
   await prisma.knowledgeArticle.update({ where: { id }, data: { zhDraft: false } });
   revalidatePath("/knowledge");
 }
@@ -580,9 +601,167 @@ export async function retranslateArticle(id: string): Promise<{ titleZh: string 
   await requireAdmin();
   const article = await prisma.knowledgeArticle.findUnique({ where: { id }, select: { title: true, content: true } });
   if (!article) return { titleZh: null, contentZh: null };
-  const { titleZh, contentZh } = await translateArticleToZh(article.title, article.content);
-  await prisma.knowledgeArticle.update({ where: { id }, data: { titleZh, contentZh, zhDraft: true } });
+  const ctx = await getTranslationContext();
+  const { titleZh, contentZh } = await translateArticleToZh(article.title, article.content, ctx);
+  await prisma.knowledgeArticle.update({ where: { id }, data: { titleZh, contentZh, aiTitleZh: titleZh, aiContentZh: contentZh, zhDraft: true } });
   revalidatePath("/knowledge");
   revalidatePath("/admin");
   return { titleZh, contentZh };
+}
+
+async function getTranslationContext(): Promise<{ glossary: GlossaryTerm[]; examples: TranslationExample[] }> {
+  const [glossary, memories] = await Promise.all([
+    prisma.translationGlossary.findMany({ orderBy: { updatedAt: "desc" } }),
+    prisma.translationMemory.findMany({ orderBy: { publishedAt: "desc" }, take: 5 }),
+  ]);
+  return { glossary, examples: memories };
+}
+
+// Glossary CRUD
+export async function getGlossaryTerms() {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  return prisma.translationGlossary.findMany({ orderBy: { createdAt: "asc" } });
+}
+
+export async function addGlossaryTerm(termEn: string, termZh: string, note?: string) {
+  await requireAdmin();
+  const en = termEn.trim();
+  const existing = await prisma.translationGlossary.findFirst({ where: { termEn: { equals: en } } });
+  if (existing) throw new Error(`EN term "${en}" already exists in the glossary.`);
+  await prisma.translationGlossary.create({ data: { termEn: en, termZh: termZh.trim(), note: note?.trim() || null } });
+}
+
+export async function updateGlossaryTerm(id: string, termEn: string, termZh: string, note?: string) {
+  await requireAdmin();
+  const en = termEn.trim();
+  const existing = await prisma.translationGlossary.findFirst({ where: { termEn: { equals: en }, NOT: { id } } });
+  if (existing) throw new Error(`EN term "${en}" already exists in the glossary.`);
+  await prisma.translationGlossary.update({ where: { id }, data: { termEn: en, termZh: termZh.trim(), note: note?.trim() || null } });
+}
+
+export async function deleteGlossaryTerm(id: string) {
+  await requireAdmin();
+  await prisma.translationGlossary.delete({ where: { id } });
+}
+
+export async function getTranslationMemories(limit = 10) {
+  await requireAdmin();
+  return prisma.translationMemory.findMany({
+    orderBy: { publishedAt: "desc" },
+    take: limit,
+    include: { article: { select: { title: true, articleNo: true } } },
+  });
+}
+
+export async function syncGlossaryToSheet(): Promise<{ ok: boolean; url?: string; error?: string }> {
+  await requireAdmin();
+  const terms = await prisma.translationGlossary.findMany({ orderBy: { createdAt: "asc" } });
+  return pushGlossaryToSheet(terms.map(t => ({ ...t, updatedAt: t.updatedAt })));
+}
+
+export async function syncTranslationMemoryToSheet(): Promise<{ ok: boolean; url?: string; error?: string }> {
+  await requireAdmin();
+  const memories = await prisma.translationMemory.findMany({
+    orderBy: { publishedAt: "desc" },
+    include: { article: { select: { title: true, articleNo: true } } },
+  });
+  return pushTranslationMemoryToSheet(memories);
+}
+
+export async function syncTalkTrackMemoryToSheet(): Promise<{ ok: boolean; url?: string; error?: string }> {
+  await requireAdmin();
+  const memories = await prisma.talkTrackMemory.findMany({ orderBy: { savedAt: "desc" } });
+  return pushTalkTrackMemoryToSheet(memories);
+}
+
+export async function getGlossarySheetConfigured(): Promise<boolean> {
+  await requireAdmin();
+  return isGlossarySheetConfigured();
+}
+
+// ── Talk Track ──────────────────────────────────────────────────────────────
+
+export async function addTalkTrack(articleId: string, content: string, language = "CN", aiDraft?: string) {
+  await requireAdmin();
+  const count = await prisma.articleTalkTrack.count({ where: { articleId } });
+  const track = await prisma.articleTalkTrack.create({
+    data: { articleId, content, aiDraft: aiDraft || null, language, order: count },
+  });
+  if (aiDraft && aiDraft !== content) {
+    await prisma.talkTrackMemory.create({
+      data: { articleId, language, aiDraft, savedContent: content },
+    });
+  }
+  return track;
+}
+
+export async function updateTalkTrack(id: string, content: string) {
+  await requireAdmin();
+  const existing = await prisma.articleTalkTrack.findUnique({
+    where: { id },
+    select: { aiDraft: true, articleId: true, language: true },
+  });
+  await prisma.articleTalkTrack.update({ where: { id }, data: { content } });
+  if (existing?.aiDraft && existing.aiDraft !== content) {
+    await prisma.talkTrackMemory.create({
+      data: { articleId: existing.articleId, language: existing.language, aiDraft: existing.aiDraft, savedContent: content },
+    });
+  }
+  revalidatePath("/knowledge");
+}
+
+export async function deleteTalkTrack(id: string) {
+  await requireAdmin();
+  await prisma.articleTalkTrack.delete({ where: { id } });
+  revalidatePath("/knowledge");
+}
+
+export async function generateTalkTrack(articleId: string, language = "CN"): Promise<string> {
+  await requireAdmin();
+  const article = await prisma.knowledgeArticle.findUnique({
+    where: { id: articleId },
+    select: { title: true, content: true },
+  });
+  if (!article) return "";
+
+  const memories = await prisma.talkTrackMemory.findMany({
+    where: { language },
+    orderBy: { savedAt: "desc" },
+    take: 3,
+    select: { aiDraft: true, savedContent: true },
+  });
+
+  return generateTalkTrackDraft(
+    article.title,
+    article.content,
+    language,
+    memories
+  );
+}
+
+export async function getTalkTrackMemories(limit = 20) {
+  await requireAdmin();
+  return prisma.talkTrackMemory.findMany({
+    orderBy: { savedAt: "desc" },
+    take: limit,
+    select: { id: true, language: true, aiDraft: true, savedContent: true, savedAt: true },
+  });
+}
+
+export async function checkTermSubstitutions(trackId: string): Promise<TermSubstitution[]> {
+  await requireAdmin();
+  const track = await prisma.articleTalkTrack.findUnique({
+    where: { id: trackId },
+    select: { aiDraft: true, content: true },
+  });
+  if (!track?.aiDraft || track.aiDraft === track.content) return [];
+
+  const substitutions = await detectTermSubstitutions(track.aiDraft, track.content);
+  if (!substitutions.length) return [];
+
+  // Filter out terms already in the glossary
+  const glossary = await prisma.translationGlossary.findMany({ select: { termZh: true } });
+  const existingZh = new Set(glossary.map(g => g.termZh.trim()));
+  return substitutions.filter(s => !existingZh.has(s.termZh.trim()));
 }
